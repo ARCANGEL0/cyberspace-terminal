@@ -7,7 +7,7 @@ import { bytes } from '@cyberspace/kernel'
 import type { Sound } from '@cyberspace/crt/audio'
 import { softKeydownWanted, softInputKeys, SENTINEL } from '@cyberspace/crt/softkeys'
 import { aliasKey, encodeKey, encodeKeyName } from './keys'
-import { ANDROID, hostModifier, MAC } from './config'
+import { ANDROID, hostModifier } from './config'
 import type { Baud } from './baud'
 import type { Scrollback } from './scrollback'
 import type { ConfigBox } from './settings'
@@ -28,7 +28,7 @@ export interface KeyboardDeps {
   snd: Sound
   scroll: Scrollback
   config: () => ConfigBox | null
-  /** The job switcher. CMD-K (CTRL-K off a Mac) opens and steps it; letting the modifier go chooses. */
+  /** The job switcher. CMD-K (CTRL-K off a Mac) toggles it. */
   palette: () => JobPalette | null
   /** CMD-I (CTRL-I off a Mac): the notice on the bar, or the inbox when the bar is down. */
   inbox?: () => void
@@ -138,9 +138,12 @@ export class Keyboard {
     // The switcher before the key click: it ticks for itself. The chord is
     // Cmd+K on a Mac and Ctrl+K elsewhere, as on the site. e.code, not e.key:
     // with Option or AltGr held the character is the layout's, not the letter.
+    // Fix menu and config: Ctrl+K was opening the config box alongside the
+    // switcher and could fail to move to the next item. It now toggles the
+    // switcher only; F1 remains the config toggle.
     if (hostModifier(e) && !e.altKey && e.code === 'KeyK') {
       e.preventDefault()
-      this.stepSwitcher(e.shiftKey ? -1 : 1)
+      if (!ev.repeat) this.toggleSwitcher()
       return
     }
     // e.code for the same reason. Ctrl-I is not Tab here: the Tab key arrives as
@@ -158,10 +161,13 @@ export class Keyboard {
     }
     const config = this.d.config()
     const overlay = this.d.overlay()
+    const palette = this.d.palette()
     // F1 opens the config box, except over the screensaver, which takes the
-    // key like any other and wakes.
-    if (e.key === 'F1' && (!overlay?.open || overlay === config)) {
+    // key like any other and wakes. The switcher gives way, so F1 closes it
+    // and toggles the box in one press.
+    if (e.key === 'F1' && (!overlay?.open || overlay === config || overlay === palette)) {
       e.preventDefault()
+      if (palette?.open) palette.toggle()
       config?.toggle()
       return
     }
@@ -209,15 +215,23 @@ export class Keyboard {
     else this.press('F1')
   }
 
+  /** Ctrl+K: open the switcher, or close it when it is already up. */
+  private toggleSwitcher(): void {
+    const palette = this.d.palette()
+    const overlay = this.d.overlay()
+    if (!palette || !this.d.live()) return
+    if (!overlay?.open || overlay === palette) palette.toggle()
+  }
+
+  /** The phone key bar: open the switcher, or move down one row. */
   private stepSwitcher(dir: 1 | -1): void {
     const palette = this.d.palette()
     const overlay = this.d.overlay()
     if (palette && this.d.live() && (!overlay?.open || overlay === palette)) palette.step(dir)
   }
 
-  /** A key released: the switcher's modifier takes its row, and an overlay that tracks releases gets the key. */
+  /** A key released: an overlay that tracks releases gets the key. */
   keyUp(e: KeyboardEvent): void {
-    if (e.key === (MAC ? 'Meta' : 'Control')) this.d.palette()?.release()
     const overlay = this.d.overlay()
     if (overlay?.open) overlay.keyUp?.(keyInput(aliasKey(e).key, e.ctrlKey, e.shiftKey))
   }

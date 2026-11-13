@@ -1,11 +1,10 @@
 // The job switcher: CMD-K over the machine, on the CRT grid outside the pty.
 // CTRL-K off a Mac, the platform's own modifier either way; see config.ts.
 //
-// The chord opens the list with the row after the current one selected; again
-// moves down, with Shift up, and letting the modifier go takes the row. Any
-// other key makes the list ordinary: arrows, digits and Enter choose, Escape
-// leaves, Delete kills the selected job after a confirm. The switch itself is
-// the kernel's (Jobs.switchTo); the shell picks it up at its prompt.
+// The chord toggles the list. It opens on the current row and a second press
+// closes it. Arrows and digits move, Enter chooses, Escape leaves, Delete kills
+// the selected job after a confirm. The switch itself is the kernel's
+// (Jobs.switchTo); the shell picks it up at its prompt.
 
 import type { CrtScreen } from '@cyberspace/crt'
 import type { Sound } from '@cyberspace/crt/audio'
@@ -36,8 +35,6 @@ export class JobPalette implements Overlay {
   private stack: ScreenStack | null = null
   private rows: Row[] = []
   private items: string[] = []
-  /** Set by any key; from then on letting go of Cmd no longer chooses. */
-  private sticky = false
   private cursorWas = true
 
   constructor(
@@ -59,7 +56,16 @@ export class JobPalette implements Overlay {
     return !!this.stack?.active
   }
 
-  /** Cmd+K: open on the next row, or move the selection by `dir`. */
+  /** Ctrl+K: open on the current row, or close the list when it is already up. */
+  toggle(): void {
+    // Fix menu and config: Ctrl+K was opening the config box together with the
+    // switcher and could stall on the first row. It now toggles the list only;
+    // F1 remains the config toggle.
+    if (this.open) { this.hide(); return }
+    this.step(1)
+  }
+
+  /** The phone key bar: open on the current row, or move the selection by `dir`. */
   step(dir: 1 | -1): void {
     if (this.open) {
       this.stack!.key(arrow(dir))
@@ -70,17 +76,10 @@ export class JobPalette implements Overlay {
     this.build(kernel)
     const jobs = kernel.jobs
     const here = this.rows.findIndex(r => jobs.fg ? r.kind === 'job' && r.job === jobs.fg : r.kind === 'shell')
-    this.show((here + dir + this.rows.length) % this.rows.length)
-  }
-
-  /** Cmd let go: take the selected row, unless another key made the list ordinary. */
-  release(): void {
-    if (!this.open || this.sticky) return
-    this.stack!.key({ key: 'Enter', ctrlKey: false, shiftKey: false, altKey: false, metaKey: false })
+    this.show(here < 0 ? 0 : here)
   }
 
   key(k: KeyInput): void {
-    this.sticky = true
     this.stack?.key(k)
   }
 
@@ -108,7 +107,6 @@ export class JobPalette implements Overlay {
     grid.lock()
     this.cursorWas = RENDER.cursor
     RENDER.cursor = false
-    this.sticky = false
     this.snd.tick()
 
     const picker = new SelectPopup({
@@ -177,7 +175,6 @@ export class JobPalette implements Overlay {
         this.hide()
         this.build(kernel)
         this.show(Math.min(Math.max(at, 0), this.rows.length - 1))
-        this.sticky = true
       },
     }))
   }
